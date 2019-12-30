@@ -1,0 +1,16 @@
+# Query: E813EA038141E9CE
+
+★ ★ ★ ★ ★ 100分
+
+```sql
+
+SELECT  
+  a  
+FROM  
+  b  
+  JOIN  c  
+  JOIN  d
+```
+
+## OK
+
