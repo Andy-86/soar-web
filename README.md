@@ -30,7 +30,7 @@
      user: root <br/>
      password: root <br/>
      disable: false <br/>
-     alias: scenic <br/><br\>
+     alias: scenic <br/><br/>
    * alias字段为数据库对别名，与第一部分对数据源传入参数相对应，具体可以参照/etc/soar.yaml
    
 3.soar 检查索引是根据索引和where条件对包含关系来判读是否需要新增索引，本项目只针对mysql innodb 改为左前匹配，比如 where a=*
