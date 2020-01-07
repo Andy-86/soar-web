@@ -32,6 +32,7 @@ import (
 var (
 	Multievns map[string]*VirtualEnv
 	Onlinevns map[string]*database.Connector
+	Backevns map[string]*database.Connector
 )
 
 // VirtualEnv SQL优化评审 测试环境
@@ -116,6 +117,7 @@ func BuildEnv() (*VirtualEnv, *database.Connector) {
 func BuildSimpleEnv() {
 	evns := make(map[string]*VirtualEnv)
 	connector := make(map[string]*database.Connector)
+	backups := make(map[string]*database.Connector)
 	for key, dsn := range common.Config.Databases {
 		dsn.Net = "tcp"
 		dsn.Charset = "utf8"
@@ -127,6 +129,7 @@ func BuildSimpleEnv() {
 		// Disable: true,
 		dsn.Version = 99999
 		connTest, err := database.NewConnector(dsn)
+		backup, err := database.NewConnector(dsn)
 		common.LogIfError(err, "")
 		// 生成测试环境
 		vEnv := NewVirtualEnv(connTest)
@@ -137,9 +140,11 @@ func BuildSimpleEnv() {
 		dsn.Version = vEnvVersion
 		evns[key] = vEnv
 		connector[key] = connTest
+		backups[key] = backup
 	}
 	Multievns = evns
 	Onlinevns = connector
+	Backevns = backups
 }
 
 func BuildOnlineEnv() *database.Connector {
@@ -274,7 +279,7 @@ func CurrentDB(sql, db string) string {
 // BuildVirtualEnv rEnv 为 SQL 源环境，DB 使用的信息从接口获取
 // 注意：如果是 USE, DDL 等语句，执行完第一条就会返回，后面的 SQL 不会执行
 func (vEnv *VirtualEnv) BuildVirtualEnv(rEnv *database.Connector, SQLs ...string) bool {
-	var stmt sqlparser.Statement
+ 	var stmt sqlparser.Statement
 	var err error
 
 	// 置空错误信息
@@ -433,7 +438,7 @@ func (vEnv *VirtualEnv) BuildVirtualEnv(rEnv *database.Connector, SQLs ...string
 				if len(vEnv.TableMap[vEnv.Hash2DB[vEnv.Database]][tb.TableName]) == 0 {
 					err = vEnv.createTable(rEnv, tb.TableName)
 				}
-
+				//err = vEnv.createTable(rEnv, tb.TableName)
 				if err != nil {
 					common.Log.Error("BuildVirtualEnv %s.%s Error : %v", rEnv.Database, tb.TableName, err)
 					return false
@@ -534,18 +539,36 @@ func (vEnv *VirtualEnv) createTable(rEnv *database.Connector, tbName string) err
 
 	// 记录Table创建信息
 	vEnv.TableMap[rEnv.Database][tbName] = tbName
+	// 改变数据环境
+	rEvnDbNmae := rEnv.Database
+	var alias string
+	for key, value := range common.Config.Databases {
+		if value.Schema == rEvnDbNmae {
+			alias = key
+			break
+		}
+	}
 
 	// 生成建表语句
 	common.Log.Debug("createTable DSN(%s/%s): generate ddl", rEnv.Addr, rEnv.Database)
-	ddl, err := vEnv.ShowCreateTable(tbName)
+	ddl, err := Backevns[alias].ShowCreateTable(tbName)
 	if err != nil {
 		// 有可能是用户新建表，因此线上环境查不到
 		common.Log.Error("createTable, %s DDL Error : %v", tbName, err)
 		return err
 	}
+	vEnv.Database = vEnv.DBRef[rEvnDbNmae]
 
-	// 改变数据环境
-	vEnv.Database = vEnv.DBRef[rEnv.Database]
+	// 先删除表 by pwl
+	deleteStr := fmt.Sprintf("drop table if exists %s", tbName)
+	delRes, delErr := vEnv.Query(deleteStr)
+	if delErr != nil {
+		// 有可能是用户新建表，因此线上环境查不到
+		common.Log.Error("createTable: %s Error : %v", tbName, delErr)
+		return err
+	}
+	err = delRes.Rows.Close()
+
 	res, err := vEnv.Query(ddl)
 	if err != nil {
 		// 有可能是用户新建表，因此线上环境查不到
@@ -558,7 +581,7 @@ func (vEnv *VirtualEnv) createTable(rEnv *database.Connector, tbName string) err
 	// 泵取数据
 	if common.Config.Sampling {
 		common.Log.Debug("createTable, Start Sampling data from %s.%s to %s.%s ...", rEnv.Database, tbName, vEnv.DBRef[rEnv.Database], tbName)
-		err = vEnv.SamplingData(rEnv, tbName)
+		err = vEnv.SamplingData(Backevns[alias], tbName)
 	}
 	return err
 }

@@ -1443,7 +1443,7 @@ func FormatSuggest(sql string, currentDB string, format string, suggests ...map[
 			buf = append(buf, fmt.Sprintln("* **Severity:** ", suggest[item].Severity))
 			_, err := strconv.Atoi(strings.Trim(suggest[item].Severity, "L"))
 			if err == nil {
-				//去除Heuristic 的扣分只考虑索引
+				//去除Heuristic 的扣分只考虑索引 by pwl
 				//	score = score - minus*5
 			} else {
 				common.Log.Debug("FormatSuggest, sortedHeuristicSuggest, strconv.Atoi, Error: ", err)

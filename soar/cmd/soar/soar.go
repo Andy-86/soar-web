@@ -35,7 +35,8 @@ import (
 	"github.com/percona/go-mysql/query"
 )
 
-var isFirstClean bool = true
+var scoreMap map[string]string = make(map[string]string)
+var fingerprintMap map[string]string = make(map[string]string)
 
 func doSqlQuery(w http.ResponseWriter, r *http.Request) {
 	params := r.URL.Query()
@@ -57,9 +58,21 @@ func doSqlQuery(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, result)
 }
 
+func refreshEnv(w http.ResponseWriter, r *http.Request) {
+	params := r.URL.Query()
+	//获取参数
+	table := params.Get("table")
+	databaseName := params.Get("database")
+	rEvn := env.Multievns[databaseName]
+	if rEvn.TableMap != nil {
+		delete(rEvn.TableMap[common.Config.Databases[databaseName].Schema], table)
+	}
+}
+
 func main() {
 	mux := routes.New()
 	mux.Get("/http/sql", doSqlQuery)
+	mux.Put("/http/sql", refreshEnv)
 	http.Handle("/", mux)
 	// 配置文件&命令行参数解析
 	initConfig()
@@ -174,6 +187,12 @@ func do(key string) string {
 		fingerprint := strings.TrimSpace(query.Fingerprint(sql))
 		// SQL 签名
 		id = query.Id(fingerprint)
+		// 检查缓存值
+		cacheResult := scoreMap[id]
+		if len(cacheResult) > 0 {
+			suggestStr = append(suggestStr, cacheResult)
+			continue
+		}
 		currentDB = env.CurrentDB(sql, currentDB)
 		switch common.Config.ReportType {
 		case "fingerprint":
@@ -475,6 +494,9 @@ func do(key string) string {
 		}
 		common.Log.Debug("end of print suggestions, Query: %s", q.Query)
 		// +++++++++++++++++++++打印单条 SQL 优化建议[结束]++++++++++++++++++++++++++}
+		// 加入缓存 by pwl
+		scoreMap[id] = str
+		fingerprintMap[id] = fingerprint
 	}
 
 	// 同一张表的多条 ALTER 语句合并为一条
