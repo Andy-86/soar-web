@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode"
 
 	"vitess.io/vitess/go/vt/sqlparser"
@@ -42,10 +43,35 @@ const (
 	TokenTypeVariable         = 12
 )
 
+type SafeMap struct {
+	sync.RWMutex
+	Map map[string]Token
+}
+
+func newSafeMap() *SafeMap {
+	sm := new(SafeMap)
+	sm.Map = make(map[string]Token)
+	return sm
+
+}
+
+func (sm *SafeMap) readMap(key string) Token {
+	sm.RLock()
+	value := sm.Map[key]
+	sm.RUnlock()
+	return value
+}
+
+func (sm *SafeMap) writeMap(key string, value Token) {
+	sm.Lock()
+	sm.Map[key] = value
+	sm.Unlock()
+}
+
 var maxCachekeySize = 15
 var cacheHits int
 var cacheMisses int
-var tokenCache map[string]Token
+var tokenCache SafeMap
 
 var tokenBoundaries = []string{
 	// multi character
@@ -790,7 +816,7 @@ func Tokenize(sql string) []Token {
 	var token Token
 	var tokenLength int
 	var tokens []Token
-	tokenCache = make(map[string]Token)
+	tokenCache := newSafeMap()
 
 	// Used to make sure the string keeps shrinking on each iteration
 	oldStringLen := len(sql) + 1
@@ -816,9 +842,9 @@ func Tokenize(sql string) []Token {
 		}
 
 		// See if the token is already cached
-		if _, ok := tokenCache[cacheKey]; ok {
+		if len(tokenCache.readMap(cacheKey).Val) > 0 {
 			// Retrieve from cache
-			token = tokenCache[cacheKey]
+			token = tokenCache.readMap(cacheKey)
 			tokenLength = len(token.Val)
 			cacheHits = cacheHits + 1
 		} else {
@@ -828,7 +854,7 @@ func Tokenize(sql string) []Token {
 			cacheMisses = cacheMisses + 1
 			// If the token is shorter than the max length, store it in cache
 			if cacheKey != "" && tokenLength < maxCachekeySize {
-				tokenCache[cacheKey] = token
+				tokenCache.writeMap(cacheKey, token)
 			}
 		}
 
